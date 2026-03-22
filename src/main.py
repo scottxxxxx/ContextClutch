@@ -2,6 +2,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import subprocess
 import shlex
+import json
+import uuid
+import os
 
 app = FastAPI(title="Context Clutch API", description="The intelligent execution proxy for LLM agents.")
 
@@ -17,25 +20,65 @@ class CommandResponse(BaseModel):
 # The absolute maximum string length an agent can receive in a single execution loop.
 MAX_OUTPUT_LENGTH = 2000
 
-def apply_clutch(output: str) -> tuple[str, bool]:
+def apply_clutch(output: str, command: str) -> tuple[str, bool]:
     """
-    The core 'Clutch' mechanism. If the output is dangerously large, it slices the 
-    head and tail, injects a context-saving summary, and drops the useless middle data.
+    The V3 'Drop-File' Clutch mechanism. Always preserves the full output by 
+    writing it to a temporary file, and hands the LLM agent a pointer to that file
+    along with the summary. Prevents all LLM data-loss gaslighting.
     """
     if len(output) <= MAX_OUTPUT_LENGTH:
         return output, False
+        
+    cmd_lower = command.lower().strip()
+    drop_id = uuid.uuid4().hex[:8]
     
-    # Take 40% from the start and 40% from the bottom
+    # 1. JSON API Responses (Never slice JSON, always drop to file)
+    try:
+        json.loads(output) # Validates it's JSON
+        drop_path = f"/tmp/clutch_json_{drop_id}.json"
+        with open(drop_path, "w") as f:
+            f.write(output)
+            
+        clutch_msg = f"CONTEXT CLUTCH INTERCEPTION: JSON payload is too large ({len(output)} chars) and was intercepted to preserve your context window.\n\nThe valid JSON payload has been saved to: {drop_path}\n\nUse 'jq' or Python scripts to query this file safely."
+        return clutch_msg, True
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Grep and Search Results (Show Top 50 hits, write full to disk)
+    if cmd_lower.startswith("grep ") or cmd_lower.startswith("find "):
+        lines = output.splitlines()
+        if len(lines) > 50:
+            head = "\n".join(lines[:50])
+            drop_path = f"/tmp/clutch_grep_{drop_id}.txt"
+            with open(drop_path, "w") as f:
+                f.write(output)
+            clutch_msg = f"\n\n[... 🛑 OMITTED {len(lines) - 50} MORE MATCHES. Full aggregate results saved to {drop_path}. Please refine your regex or query the drop-file ...]\n"
+            return head + clutch_msg, True
+
+    # 3. Reading Source Code (Cat/Less) (Don't sever lines of code randomly!)
+    if cmd_lower.startswith("cat ") or cmd_lower.startswith("less "):
+        lines = output.splitlines()
+        max_lines = 100
+        if len(lines) > max_lines:
+            head = "\n".join(lines[:max_lines])
+            drop_path = f"/tmp/clutch_source_{drop_id}.txt"
+            with open(drop_path, "w") as f:
+                f.write(output)
+            clutch_msg = f"\n\n[... 🛑 OMITTED {len(lines) - max_lines} MORE LINES. Full file temporarily cached at {drop_path}. USE 'head -n', 'tail -n', OR SPECIFIC 'grep' TO READ IT SECURELY ...]\n"
+            return head + clutch_msg, True
+
+    # 4. Fallback (The MVP Head/Tail Slicer, but now with a drop-file safety net)
     head_len = int(MAX_OUTPUT_LENGTH * 0.4)
     tail_len = int(MAX_OUTPUT_LENGTH * 0.4)
-    
     head = output[:head_len]
     tail = output[-tail_len:]
     omitted_chars = len(output) - (head_len + tail_len)
     
-    # Inject the Context Clutch meta-message
-    clutch_msg = f"\n\n[... 🛑 OMITTED {omitted_chars} CHARACTERS BY CONTEXT CLUTCH TO PRESERVE TOKEN WINDOW ...]\n\n"
-    
+    drop_path = f"/tmp/clutch_raw_{drop_id}.log"
+    with open(drop_path, "w") as f:
+        f.write(output)
+        
+    clutch_msg = f"\n\n[... 🛑 OMITTED {omitted_chars} CHARACTERS TO PRESERVE TOKEN WINDOW.\nFull un-truncated output saved to: {drop_path} ...]\n\n"
     return head + clutch_msg + tail, True
 
 @app.post("/v1/execute", response_model=CommandResponse)
@@ -72,7 +115,7 @@ async def execute_command(req: CommandRequest):
         if result.stderr:
             raw_output += f"\n[STDERR]\n{result.stderr}"
             
-        final_output, is_truncated = apply_clutch(raw_output)
+        final_output, is_truncated = apply_clutch(raw_output, req.command)
         
         return CommandResponse(
             original_command=req.command,
