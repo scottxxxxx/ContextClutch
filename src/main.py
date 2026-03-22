@@ -5,6 +5,7 @@ import shlex
 import json
 import uuid
 import os
+import httpx
 
 app = FastAPI(title="Context Clutch API", description="The intelligent execution proxy for LLM agents.")
 
@@ -16,6 +17,15 @@ class CommandResponse(BaseModel):
     exit_code: int
     output: str
     truncated: bool
+
+class ProxyRequest(BaseModel):
+    """
+    Used for the Universal API Gateway Pivot.
+    """
+    url: str
+    method: str = "GET"
+    headers: dict = {}
+    json_body: Optional[Dict[str, Any]] = None
 
 # The absolute maximum string length an agent can receive in a single execution loop.
 MAX_OUTPUT_LENGTH = 2000
@@ -128,3 +138,36 @@ async def execute_command(req: CommandRequest):
          raise HTTPException(status_code=408, detail="Command execution timed out. The agent triggered a hanging process.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/v1/proxy", response_model=CommandResponse)
+async def proxy_endpoint(req: ProxyRequest):
+    """
+    The Agentic API Gateway. Proxies a raw HTTP request and truncates massive JSON payloads 
+    to protect the LLM context window. Built for Sierra, LangChain, and conversational agents.
+    """
+    # Restrict arbitrary local proxies to prevent SSRF vulnerabilities
+    url_lower = req.url.lower()
+    if url_lower.startswith("http://localhost") or url_lower.startswith("http://127.0.0.1") or url_lower.startswith("http://metadata.google.internal"):
+         raise HTTPException(status_code=403, detail="SSRF Guardrail: Cannot proxy to internal infrastructure.")
+         
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.request(
+                method=req.method.upper(),
+                url=req.url,
+                headers=req.headers,
+                json=req.json_body if req.json_body else None
+            )
+            
+        raw_output = resp.text
+        # Truncate using our V3 Engine (Drop-File) if it's massive!
+        final_output, is_truncated = apply_clutch(raw_output, f"proxy {req.url}")
+        
+        return CommandResponse(
+            original_command=f"PROXY {req.method.upper()} {req.url}",
+            exit_code=resp.status_code,
+            output=final_output,
+            truncated=is_truncated
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Context Clutch Proxy Error: {str(e)}")
