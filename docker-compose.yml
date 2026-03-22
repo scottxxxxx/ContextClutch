@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  clutch-engine:
+    build: .
+    container_name: context-clutch
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+    restart: unless-stopped

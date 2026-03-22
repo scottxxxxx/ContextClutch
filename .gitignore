@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# Agent & AI Planning Documents (Keep Private)
+agent.md
+agents.md
+CLAUDE.md
+claude.md
+.gemini/
+
+# OS Files
+.DS_Store
