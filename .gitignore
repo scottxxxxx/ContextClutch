@@ -1,3 +1,6 @@
+# Secrets
+.pypirc
+
 # Python
 __pycache__/
 *.py[cod]
