@@ -13,6 +13,35 @@ When an agent executes a massive command, Context Clutch intercepts the `stdout`
 
 It automatically throttles token bloat, regulates API flow, and semantically blocks destructive commands (like `rm -rf` or network exfiltration) *before* they hit the shell.
 
+## How to Use It
+
+Context Clutch can be deployed and integrated in several ways depending on your agent framework:
+
+### 1. The Context Clutch MCP Server (Recommended)
+You can point any Model Context Protocol (MCP) compatible agent (like Claude Desktop) directly at your Context Clutch instance. Instead of rewriting all your internal APIs and scripts into rigid JSON-RPC formats, you simply expose the **Clutch Shell** tool. 
+The LLM agent executes dynamic scripts or bash commands, and the MCP server returns the truncated, safe log output. This gives your agent unlimited capability without token blowout or custom wrapper code.
+
+### 2. The Agentic API Gateway
+If you are running enterprise agents (like LangChain workflows), route your agent's execution requests through the Context Clutch proxy endpoint:
+```bash
+POST https://your-clutch-instance.com/v1/proxy/execute
+{
+  "command": "cat /var/log/syslog",
+  "max_tokens": 1500,
+  "sandbox": "agent-session-42"
+}
+# returns -> "Command succeeded. Output is 40,000 lines. Showing..."
+```
+
+### 3. The Python SDK
+Wrap your agent's local execution environment directly in Python:
+```python
+from context_clutch import ClutchEnvironment
+
+env = ClutchEnvironment(strict_mode=True)
+result = env.execute_safely("npm install")
+```
+
 ## Core Features (Roadmap)
 1. **The Context Shield:** Native `stdout` truncation, pagination, and token-saving meta-responses.
 2. **Semantic Guardrails:** Intercepts and blocks destructive bash commands or PII leaks to unauthorized domains.

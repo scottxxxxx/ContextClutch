@@ -40,4 +40,12 @@ print(f"Status Code: {res3.status_code}")
 if res3.status_code == 403:
     print(f"Security Block: {res3.json()}")
 
+print("\n=== TEST 4: HIPAA / PII Redaction Template Engine ===")
+test_text = "History: Patient admitted 12/05/2023. MRN: PAT-847291. Email: test@clinic.com. Phone: 555-019-2830. IP: 192.168.1.5"
+res4 = client.post("/v1/execute", json={"command": f"echo '{test_text}'"})
+print(f"Status Code: {res4.status_code}")
+data4 = res4.json()
+print(f"Original Text: {test_text}")
+print(f"Redacted Output: {data4.get('output', '').strip()}")
+
 print("\nAll MVP tests completed.")

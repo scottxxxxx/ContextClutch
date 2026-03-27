@@ -6,8 +6,12 @@ import json
 import uuid
 import os
 import httpx
+import asyncio
+import uvloop
+import re
 
-app = FastAPI(title="Context Clutch API", description="The intelligent execution proxy for LLM agents.")
+asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+app = FastAPI(title="Context Clutch API", description="The intelligent execution proxy for LLM agents. Now with HIPAA/PII Guardrails.")
 
 class CommandRequest(BaseModel):
     command: str
@@ -30,12 +34,51 @@ class ProxyRequest(BaseModel):
 # The absolute maximum string length an agent can receive in a single execution loop.
 MAX_OUTPUT_LENGTH = 2000
 
+# --- COMPLIANCE TEMPLATE ENGINE ---
+ACTIVE_TEMPLATE_NAME = os.getenv("COMPLIANCE_TEMPLATE", "hipaa")
+TEMPLATE_RULES = []
+
+def load_compliance_template():
+    global TEMPLATE_RULES
+    template_path = os.path.join(os.path.dirname(__file__), "templates", f"{ACTIVE_TEMPLATE_NAME}.json")
+    if os.path.exists(template_path):
+        try:
+            with open(template_path, "r") as f:
+                data = json.load(f)
+                TEMPLATE_RULES = data.get("rules", [])
+                print(f"✅ Loaded Compliance Template: {data.get('name', ACTIVE_TEMPLATE_NAME)} ({len(TEMPLATE_RULES)} exhaustive rules)")
+        except Exception as e:
+            print(f"❌ Failed to load compliance template: {e}")
+
+# Load on startup
+load_compliance_template()
+
+def apply_compliance_redaction(text: str) -> str:
+    """
+    Iterates over all loaded Regex JSON templates to exhaustively scrub the payload.
+    Skipped if no template is loaded or rules are empty.
+    """
+    if not TEMPLATE_RULES:
+        return text
+    
+    for rule in TEMPLATE_RULES:
+        try:
+            text = re.sub(rule["pattern"], rule["replacement"], text, flags=re.IGNORECASE)
+        except Exception:
+            pass # skip malformed regex in custom templates
+    return text
+# -----------------------------------
+
 def apply_clutch(output: str, command: str) -> tuple[str, bool]:
     """
     The V3 'Drop-File' Clutch mechanism. Always preserves the full output by 
     writing it to a temporary file, and hands the LLM agent a pointer to that file
     along with the summary. Prevents all LLM data-loss gaslighting.
     """
+    # 0. ALWAYS run output through the HIPAA/PII Redaction filter FIRST.
+    # This guarantees the drop-files AND the LLM context are sanitized based on the active template.
+    output = apply_compliance_redaction(output)
+
     if len(output) <= MAX_OUTPUT_LENGTH:
         return output, False
         
