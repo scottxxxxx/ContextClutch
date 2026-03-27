@@ -13,5 +13,10 @@ CLAUDE.md
 claude.md
 .gemini/
 
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
 # OS Files
 .DS_Store
